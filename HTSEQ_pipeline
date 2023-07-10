@@ -1,0 +1,178 @@
+#!/bin/bash
+
+#Make sure to change all <pwd> with the current working directory where you have all fastq raw reads and your gft and reference genome 
+# Format for Fastq raw read file names : <sample>_1.fq.fz <sample>_2.fq.gz
+
+#SBATCH --job-name=pipeline
+#SBATCH --ntasks=10
+#SBATCH --partition=bigmem2
+#SBATCH --export=ALL
+#SBATCH --array=1-49
+#SBATCH --time=48:00:00
+#SBATCH --error=/<pwd>/error.err
+#SBATCH --output=/<pwd/output.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=<easley associated email> 
+
+
+
+module load fastqc
+module load hisat2
+module load stringtie
+module load samtools 
+module load fastp
+module load python ## load ht-seq v0.13.5
+
+# Check if the number of arguments is less than three
+if [ "$#" -lt 3 ]; then
+  echo "Error: Insufficient arguments. Please provide three arguments."
+  exit 1
+fi
+
+# Assigning the command-line arguments to variables
+species=$1  #can be latin species name or common name
+reference_fa=$2 #reference genome for alignment 
+reference_gtf=$3 #reference gtf file 
+
+
+# Using the variables
+echo "Species: ${species}"
+echo "reference genome file: ${reference_fa}"
+echo "referencegtf file: ${reference_gtf}"
+
+
+touch Progress_
+#Step 1 RUN FASTQC 
+#FASTQC is done as a quality check on the RNA reads. If the quality is low, it requieres an additional step of trimming - not displayed in this pipeline - 
+
+
+#The flag -o indicated the output directory 
+mkdir ./FASTQC
+fastqc *.fq.gz  -o ./FASTQC/  
+
+
+for fq1 in ./*_1.fq.gz 
+do 
+    base="${fq1%_1.fq.gz}"
+   
+    fastp -i $fq1 -I ${base}_2.fq.gz -o ${base}.filtered.1.fq.gz -O ${base}.filtered.2.fq.gz --detect_adapter_for_pe --qualified_quality_phred 20 -h ${base}_fastp.html -j ${base}_fastp.json
+
+
+done
+mkdir ./FASTQC_filtered
+
+cp *filtered* ./FASTQC_filtered
+cd ./FASTQC_filtered
+
+fastqc *.filtered.1*  
+fastqc *.filtered.2* 
+cd ..
+
+
+mkdir FASTQC.html
+mkdir FASTQC_filtered.html
+
+cp ./FASTQC/*.html ./FASTQC.html
+cp ./FASTQC_filtered/*.html ./FASTQC_filtered.html
+
+echo "Finished Step 1 preprocessing" >> Progress_
+#STEP 2: RUN HISAT2 hisat2-build 
+#This step is an alignment of your reads with genome indexes. It first creates the index based on a GFF file and then aligns reads to the created index
+#Usage:
+#hisat2-build [options]* <reference_in> <ht2_base>
+#<reference_in> A comma-separated list of FASTA files containing the reference sequences to be aligned to, or, if -c is specified, the sequences themselves
+#<ht2-base> The basename of the index files to write. By default, hisat2-build writes files named NAME.1.ht2, NAME.2.ht2 where NAME is <ht2_base>
+
+
+module load hisat2
+hisat2-build ${reference_fa} ${species}
+
+echo "Finished index creation" >> Prrogress_ 
+
+
+#STEP 3: Run hisat2 alignment step 
+
+#HISAT2 main usage alignment
+#hisat2 [options]* -x <hisat2-idx> {-1 <m1> -2 <m2> | -U <r> 
+#-dta is for downstream aplications such as Stringtie
+#-p is for processors being used
+#-S is for the output sam file
+#-x path for the indices built and being used for alignment
+
+
+tocuh "hisat_alginment_process"
+for fq1 in ./*.filtered.1.fq.gz 
+do
+
+    base="${fq1%.filtered.1.fq.gz}"
+
+   #  gzip -t R2.fq.gz && echo ok || echo bad # checks tgat the file is good, would add as sanity check 
+
+    hisat2 -p 8 -q -x ${species} -1 "$fq1" -2 "${base}.filtered.2.fq.gz" -S "${base}_aligned.sam" --summary-file "${base}_summary.txt"
+    echo "Finished hisat2 alignment ${base}" >> hisat_alignment_process
+done
+echo "finished hisat alignments" >> Progress_
+
+touch "summary_file"
+# This for loop block takes the alignment summaries created by hisat2 with your reference samples and creates a summary file that lets you know the sample, total reads, total aligned reads, aligned score (%) and reads aligned 0 times 
+echo -e "File\tTotal Reads\tAligned Reads\tAlignment Score (%)\tPairs Aligned 0" > summary_file  
+for file in ./*summary.txt; do
+  # Extract file name
+  base="${file%_summary.txt}"
+
+  total_reads=$(head -1 "$file" | grep -o '^[0-9]\+')
+  # Extract final alignment score (last line)
+  overall_alignment_score=$(echo "$file" | grep -oP '\d+\.\d+(?=%)')
+  overall_alignment_score_=$(tail -n 1 "$file" | grep -oP '\d+\.\d+')
+  # Extract pairs_aligned_0 value and remove leading spaces and text
+  pairs_aligned_0=$(grep -n '^' "$file" | grep -E '^3:' | cut -d':' -f2- | sed 's/ aligned concordantly 0 times//g' | sed 's/^[[:space:]]*//')
+
+  alignment_score=$(echo "scale=2; $total_reads * ${overall_alignment_score_//[[:space:]]/}" | bc)
+  aligned_reads=$(echo "$overall_alignment_score" | grep -oP '\d+ \(\d+\.\d+%\)')
+  echo -e "${base#./}\t$total_reads\t$alignment_score\t$aligned_reads\t$pairs_aligned_0" >> summary_file
+done
+
+
+
+
+
+# STEP 4: RUN SAMTOOLS
+
+#To do anything meaningful with alignment data you must swith from SAM to its binary counterpart BAM file. This binary format is much easier for computer programs such as StringTie to work with.
+
+#Basic usage: 
+#$ samtools <command> [options] Samtools has a vast amount of commands, we will use the sort command to sort our alignment files 
+#-o gives the output file name
+
+module load samtools
+ 
+for i in ./*_aligned.sam  
+do
+    base="${i%_aligned.sam}"
+    samtools sort  ${i}  -o ${base}.bam -O bam
+    echo "Finished sam-> bam of ${base}" >> Progress_
+done
+
+
+
+
+module load python
+for file in *.bam;
+  do base=${file%.bam};
+#echo $tag
+htseq-count -i gene_id -f bam -s no -r pos ${base}.bam ${reference_gtf} > ${base}_HTSEQ_counts
+    echo "Progress on ${base}" >> Progress_ 
+done
+
+mkdir HTSEQ_Counts
+
+find . -name '*bam.tmp*' -size 0 -exec rm {} +   #this is to fine tmp files that have nothing inside and elimate them. When I ran this code some temporary files from some of the samples werent elimated after completion. This command eliminates them only if empty
+
+
+cp *HTSEQ_counts* ./HTSEQ_counts
+
+
+
+
+
+

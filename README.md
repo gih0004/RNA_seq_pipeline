@@ -1,10 +1,31 @@
 # HTSEQ_counts
-RNA seq pipeline designed for paired end reads using HTSEQ for producing files needed for visualizing transcriptomic data with DESEQ2 
-# Transcriptomics
+RNA seq pipeline designed for paired end reads using HTSEQ for producing files needed for visualizing transcriptomic data with DESEQ2. 
+This script Requires three arguments and in specific order within the command line when submititng the script to HPC and shouuld look like: 
+```ruby
+$ htseq_counts <species name> <reference genome fna> <reference gtf> 
+```
+where species name can be either a common name for the species or scientific, should be one string in total.
+where refernce genome fna is a fasta file that is used as the reference genome for sample alignment and indexing 
+where reference gtf is a gene transfer format  file neccesary for generarting HTSEQ count file 
 
 ```ruby 
 !/bin/bash
-SECONDS=0
+#Make sure to change all <pwd> with the current working directory where you have all fastq raw reads and your gft and reference genome 
+# Format for Fastq raw read file names : <sample>_1.fq.fz <sample>_2.fq.gz
+
+#SBATCH --job-name=pipeline
+#SBATCH --ntasks=10
+#SBATCH --partition=bigmem2
+#SBATCH --export=ALL
+#SBATCH --array=1-49
+#SBATCH --time=48:00:00
+#SBATCH --error=/<pwd>/error.err
+#SBATCH --output=/<pwd/output.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=<easley associated email> 
+
+These SBATCH commands are condtions specific for Easley HPC, the only important and universal command from this block is the shebang line. if using easley, to submit the script:
+$ sbatch HTSEQ_counts <species> <reference genome> <reference gtf> 
 ```
 
 First, Change working directory into directory where all raw reads are stored in

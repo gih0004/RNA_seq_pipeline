@@ -121,22 +121,20 @@ This for loop block takes the alignment summaries created by hisat2 with your re
 ```ruby
 touch "summary_file"
 # This for loop block takes the alignment summaries created by hisat2 with your reference samples and creates a summary file that lets you know the sample, total reads, total aligned reads, aligned score (%) and reads aligned 0 times 
-echo -e "File\tTotal Reads\tAligned Reads\tAlignment Score (%)\tPairs Aligned 0" > summary_file  
+echo -e "File\tTotal Reads\tAlignment Score (%)\tPairs Aligned Concordantly 0 times" > summary_file  
 for file in ./*summary.txt; do
   # Extract file name
   base="${file%_summary.txt}"
 
   total_reads=$(head -1 "$file" | grep -o '^[0-9]\+')
   # Extract final alignment score (last line)
-  overall_alignment_score=$(echo "$file" | grep -oP '\d+\.\d+(?=%)')
-  overall_alignment_score_=$(tail -n 1 "$file" | grep -oP '\d+\.\d+')
-  # Extract pairs_aligned_0 value and remove leading spaces and text
+  alignment_score=$(tail -n 1 "$file" | grep -oP '\d+\.\d+(?=%)')
+  # Extract pairs_aligned_0 value and remove leading space
   pairs_aligned_0=$(grep -n '^' "$file" | grep -E '^3:' | cut -d':' -f2- | sed 's/ aligned concordantly 0 times//g' | sed 's/^[[:space:]]*//')
 
-  alignment_score=$(echo "scale=2; $total_reads * ${overall_alignment_score_//[[:space:]]/}" | bc)
-  aligned_reads=$(echo "$overall_alignment_score" | grep -oP '\d+ \(\d+\.\d+%\)')
-  echo -e "${base#./}\t$total_reads\t$alignment_score\t$aligned_reads\t$pairs_aligned_0" >> summary_file
+  echo -e "${base#./}\t$total_reads\t$alignment_score\t$pairs_aligned_0" >> summary_file
 done
+
 
 ```
 To view alignment summary, use `less summary_file` , this file can also be downloaded as it is a tab delimited table.  

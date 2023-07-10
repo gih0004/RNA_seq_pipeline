@@ -100,7 +100,7 @@ echo "Finished index creation" >> Prrogress_
 #-x path for the indices built and being used for alignment
 
 
-tocuh "hisat_alginment_process"
+touch "hisat_alginment_process"
 for fq1 in ./*.filtered.1.fq.gz 
 do
 

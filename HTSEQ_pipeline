@@ -115,7 +115,7 @@ echo "finished hisat alignments" >> Progress_
 
 touch "summary_file"
 # This for loop block takes the alignment summaries created by hisat2 with your reference samples and creates a summary file that lets you know the sample, total reads, total aligned reads, aligned score (%) and reads aligned 0 times 
-echo -e "File\tTotal Reads\tAligned Reads\tAlignment Score (%)\tPairs Aligned 0" > summary_file  
+echo -e "File\tTotal Reads\tAligned Reads\tAlignment Score (%)\tPairs Aligned Concordantly 0 times" > summary_file  
 for file in ./*summary.txt; do
   # Extract file name
   base="${file%_summary.txt}"

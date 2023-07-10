@@ -91,88 +91,103 @@ hisat2-build ${reference_fa} ${species}
 echo "Finished index creation" >> Prrogress_ 
 ```
 Note the Progress_ file, its purpose is to document where within the pipeline is the HPC at that time. To view you can do `less Progress_` on the comand line. This is the same for the execution of the rest of the script. 
+
+
+### Step 3: HISAT2 alignment step 
 After creating indices from genome, we can then run alignment of the samples against the indices recently created:  
 ```ruby
-for fq1 in ./*_R1_001.fastq.gz #This should be changed into whatever you have last in sample names common between all samples 
+touch "hisat_alginment_process"
+for fq1 in ./*.filtered.1.fq.gz 
 do
-echo "working with file $fq1" #only neccesary for when running through the terminal
-base=$(basename $fq1 _R1_001.fastq.gz )
-echo "base name is $base"
 
-fq1=./${base}_R1_001.fastq.gz
-fq2=./${base}_R2_001.fastq.gz
+    base="${fq1%.filtered.1.fq.gz}"
 
-hisat2 -p 8 --dta -x ./sunflower/sunflower -1 $fq1 -2 $fq2 -S ${base}.sunflower.sam
+   #  gzip -t R2.fq.gz && echo ok || echo bad # checks tgat the file is good, would add as sanity check 
+
+    hisat2 -p 8 -q -x ${species} -1 "$fq1" -2 "${base}.filtered.2.fq.gz" -S "${base}_aligned.sam" --summary-file "${base}_summary.txt"
+    echo "Finished hisat2 alignment ${base}" >> hisat_alignment_process
 done
-echo "HISAT2 finished running!" # only use this line if running directly from terminal
+echo "finished hisat alignments" >> Progress_
+
 #-dta is for downstream aplications such as Stringtie
 #-p is for processors being used
 #-S is for the output sam file
 #-x is for the indices built and being used for alignment
 ```
+Note that a hisat_alignment_process fike is made, alignment is recursive in hisat and time consuming, hence a new file is made just to monitor the progress of the alignment step. 
+Again, once the step is completed, the Progress_ file is updated and it states the progress of the pipeline  
+  
+This for loop block takes the alignment summaries created by hisat2 with your reference samples and creates a summary file that lets you know the sample, total reads, total aligned reads, aligned score (%) and reads aligned 0 times 
+```ruby
+touch "summary_file"
+# This for loop block takes the alignment summaries created by hisat2 with your reference samples and creates a summary file that lets you know the sample, total reads, total aligned reads, aligned score (%) and reads aligned 0 times 
+echo -e "File\tTotal Reads\tAligned Reads\tAlignment Score (%)\tPairs Aligned 0" > summary_file  
+for file in ./*summary.txt; do
+  # Extract file name
+  base="${file%_summary.txt}"
 
+  total_reads=$(head -1 "$file" | grep -o '^[0-9]\+')
+  # Extract final alignment score (last line)
+  overall_alignment_score=$(echo "$file" | grep -oP '\d+\.\d+(?=%)')
+  overall_alignment_score_=$(tail -n 1 "$file" | grep -oP '\d+\.\d+')
+  # Extract pairs_aligned_0 value and remove leading spaces and text
+  pairs_aligned_0=$(grep -n '^' "$file" | grep -E '^3:' | cut -d':' -f2- | sed 's/ aligned concordantly 0 times//g' | sed 's/^[[:space:]]*//')
 
+  alignment_score=$(echo "scale=2; $total_reads * ${overall_alignment_score_//[[:space:]]/}" | bc)
+  aligned_reads=$(echo "$overall_alignment_score" | grep -oP '\d+ \(\d+\.\d+%\)')
+  echo -e "${base#./}\t$total_reads\t$alignment_score\t$aligned_reads\t$pairs_aligned_0" >> summary_file
+done
 
-### Step 3: converting SAM files to BAM files
+```
+To view alignment summary, use `less summary_file` , this file can also be downloaded as it is a tab delimited table.  
+
+### Step 4: converting SAM files to BAM files
+#To do anything meaningful with alignment data you must swith from SAM to its binary counterpart BAM file. This binary format is much easier for computer programs such as StringTie to work with.
+
+#Basic usage: 
+#$ samtools <command> [options] Samtools has a vast amount of commands, we will use the sort command to sort our alignment files 
+#-o gives the output file name
 ```ruby
 module load samtools
-for i in /scratch/aubclsb0203/Project/HaIM/*.sam  #you can change the absolute path to relative path
+for i in ./*_aligned.sam  
 do
-samtools sort  ${i}  -o ${i}.sort.bam
+    base="${i%_aligned.sam}"
+    samtools sort  ${i}  -o ${base}.bam -O bam
+    echo "Finished sam-> bam of ${base}" >> Progress_
 done
+
 ```
 
-To convert  gff to gtf file, which wont always be neccesary, use following command: 
+To convert  gff to gtf file, which wont always be neccesary, use following command:
 ```ruby
 module load gffread/0.9.8
-gffread genomic.gff -T -o genomic_sunflower.gtf
+gffread genomic.gff -T -o genomic.gtf
+#this code block is not within the executable script 
 ```
 
 
-### STEP 4: Run featureCounts - StringTie
-To load the module first specify source and then module to load:
-source /opt/asn/etc/asn-bash-profiles-special/modules.sh
-module load stringtie/1.3.3
-```ruby
-for file in *.sunflower.sam.sort.bam
-do
-       tag=${file%.sunflower.sam.sort.bam}
-stringtie -p 8 -G genomic_sunflower.gtf -o $tag.gtf -l sunflower  $tag.sunflower.sam.sort.bam
-done
-```
-Using a wildcard for gtf files made from step 4, create a merged txt file of all gtf files generated from stringtie called mergelist.txt 
-```ruby
-ls *L002.gtf > mergelist.txt 
-```
+### STEP 5: Generate HTSEQ counts 
 
-The command below takes the merged text file recently created and returns a proper merged gtf file called stringtie_merged_sunflower.gtf:
-```ruby
-source /opt/asn/etc/asn-bash-profiles-special/modules.sh
-module load stringtie/1.3.3
-stringtie --merge -p 8 -G genomic_sunflower.gtf -o stringtie_merged_sunflower.gtf mergelist.txt
-```
-
-### STEP 5: Generating count table for ballgown:
-To use ballgown, a count table from all the gtf files must be made. Stringtie will compare each sample agianst merged assembly to espimate transcript abundance
-```ruby
-source /opt/asn/etc/asn-bash-profiles-special/modules.sh
-module load stringtie/1.3.3
-
+```ruby 
+module load python
 for file in *.bam;
-
-    do tag=${file%.bam};
-
-stringtie -e -B -p 8 -G stringtie_merged_sunflower.gtf -o /scratch/aubclsb0203/Project/HaIM/ballgown/$tag/$tag.gtf $tag.bam
-
+  do base=${file%.bam};
+#echo $tag
+htseq-count -i gene_id -f bam -s no -r pos ${base}.bam ${reference_gtf} > ${base}_HTSEQ_counts
+    echo "Progress on ${base}" >> Progress_ 
 done
-
-duration=$SECONDS
-echo "$(($duration / 60)) minutes and $(($duration % 60)) seconds elapsed."
 ```
-Now you will have neccesary output files to use in ballgown analysis, such files are : 
-1. e_data.ctab
-2. e2t.ctab
-3. i_data.ctab
-4. i2t.ctab
-5. t_data.ctab
-You should have these 5 files within a directory called ballgown and within subdirectories based of the sample names 
+
+Tis is to fine tmp files that have nothing inside and elimate them. When I ran this code some temporary files from some of the samples werent elimated after completion. This command eliminates them only if empty  `find . -name '*bam.tmp*' -size 0 -exec rm {} + `
+```ruby
+mdkir HTSEQ_Counts
+cp *HTSEQ_counts* ./HTSEQ_counts
+```
+  
+With these 5 steps you should have all files for a holsitic understanding of your rna seq data. The following step would be visualitation, which should be done with DESEQ2 and which script is not provided at the time of creation of this repository. At the end of this pipeline you should have:  
+1) Directories containing important files : FASTQC , FASTQC_filtered , FASTQC_filtered.html ; HTSEQ_counts
+2) Progress_ file that indicates what was done and what was not
+3) and error file, if specified within the sbatch options - this is specific for easley
+4) alignment_summary file which is tab delimited and can be used to evaluate alignment of your dataset
+
+

@@ -1,6 +1,8 @@
 # HTSEQ_counts
-RNA seq pipeline designed for paired end reads using HTSEQ for producing files needed for visualizing transcriptomic data with DESEQ2. 
-This script Requires three arguments and in specific order within the command line when submititng the script to HPC and shouuld look like: 
+RNA seq pipeline designed for paired end reads using HTSEQ for producing files needed for visualizing transcriptomic data with DESEQ2. To use this script, put all fastq files within a single directory containing additionally your reference genome fna file and your reference gtf file.  
+Fastq file names should be formated as follows: sample_1.fq.gz sample_2.fq.gz
+
+This script requires three arguments and in specific order within the command line when submititng the script to HPC and shouuld look like: 
 ```ruby
 $ htseq_counts <species name> <reference genome fna> <reference gtf> 
 ```
@@ -11,16 +13,16 @@ where reference gtf is a gene transfer format  file neccesary for generarting HT
 ```ruby 
 !/bin/bash
 #Make sure to change all <pwd> with the current working directory where you have all fastq raw reads and your gft and reference genome 
-# Format for Fastq raw read file names : <sample>_1.fq.fz <sample>_2.fq.gz
+# Format for Fastq raw read file names : <sample>_1.fq.gz <sample>_2.fq.gz
 
-#SBATCH --job-name=pipeline
+#SBATCH --job-name=HTSEQ_counts
 #SBATCH --ntasks=10
 #SBATCH --partition=bigmem2
 #SBATCH --export=ALL
 #SBATCH --array=1-49
-#SBATCH --time=48:00:00
+#SBATCH --time=96:00:00
 #SBATCH --error=/<pwd>/error.err
-#SBATCH --output=/<pwd/output.out
+#SBATCH --output=/<pwd>/output.out
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=<easley associated email> 
 
@@ -28,33 +30,68 @@ These SBATCH commands are condtions specific for Easley HPC, the only important 
 $ sbatch HTSEQ_counts <species> <reference genome> <reference gtf> 
 ```
 
-First, Change working directory into directory where all raw reads are stored in
-`cd /scratch/aubclsb0203/Project/HaIM`
 
-### STEP 1: Run fastqc
+Step one is preprocessing of rna raw reads. This block takes the fastq rna raw reads and does three things:  
+1) runs fastqc on the raw reads   
+2) trims of adapters using fastp and an automatic adapter recognition option  
+3) runs fastqc on the filtered AND adapterterless rna reads created by fastp 
+Adapters can also be specified within the fastp command
+
+### STEP 1: Run fastqc and Filter Raw reads
 ```ruby
 module load fastqc
-fastqc *.fastq.gz  -o /scratch/aubclsb0203/Project/HaIM #all fastq files within a directory will run fastqc on, it outputs to whatever path is given in -o option
+mkdir ./FASTQC
+fastqc *.fq.gz  -o ./FASTQC/  
+
+
+for fq1 in ./*_1.fq.gz 
+do 
+    base="${fq1%_1.fq.gz}"
+   
+    fastp -i $fq1 -I ${base}_2.fq.gz -o ${base}.filtered.1.fq.gz -O ${base}.filtered.2.fq.gz --detect_adapter_for_pe --qualified_quality_phred 20 -h ${base}_fastp.html -j ${base}_fastp.json
+
+
+done
+mkdir ./FASTQC_filtered
+
+cp *filtered* ./FASTQC_filtered
+cd ./FASTQC_filtered
+
+fastqc *.filtered.1*  
+fastqc *.filtered.2* 
+cd ..
+
+
+mkdir FASTQC.html
+mkdir FASTQC_filtered.html
+
+cp ./FASTQC/*.html ./FASTQC.html
+cp ./FASTQC_filtered/*.html ./FASTQC_filtered.html
+
 ```
+Results of Step 1: You should have three new directories:  
+a. FASTQC = has original fastqc from rna raw reads  
+b. FASTQC_filtered  = has fastqc results from adapterless and quality filtered reads   
+c. FASTQC_filtered.html = contains all html files for viewing fastqc results in browser from the filtered and adapterless reads 
 
-Did not run trimmomatic to trim reads with poor quality because it was not neccesary due to quality of reads being good
-
-For cleaning up GFF files downloaded from internet, and ensuring they only contain identifier in header row which is neccesary for creating indices, use: 
-
-```ruby
-awk -F "." '{print $1}' GCF_002127325.2_HanXRQr2.0-SUNRISE_genomic.fna > GCFedited.fna
-```
 
 
 
 ### STEP 2: Run HISAT2
-To create the genome indices: 
 
+Hisat firs creates the index based on a fna file and then aligns reads to the created index.   
+Usage:  
+hisat2-build [options]* <reference_in> <ht2_base>  
+<reference_in> A comma-separated list of FASTA files containing the reference sequences to be aligned to, or, if -c is specified, the sequences themselves = {reference_fa}   
+<ht2-base> The basename of the index files to write. By default, hisat2-build writes files named NAME.1.ht2, NAME.2.ht2 where NAME is <ht2_base> = {species}  
 ```ruby 
-module load hisat2/2.0.5
-hisat2-build --large-index  -f GCFedited.fna sunflower
+
+module load hisat2
+hisat2-build ${reference_fa} ${species}
+echo "Finished index creation" >> Prrogress_ 
 ```
-After creating indices from genome, we can then run alignment of the samples against the indices recently created: 
+Note the Progress_ file, its purpose is to document where within the pipeline is the HPC at that time. To view you can do `less Progress_` on the comand line. This is the same for the execution of the rest of the script. 
+After creating indices from genome, we can then run alignment of the samples against the indices recently created:  
 ```ruby
 for fq1 in ./*_R1_001.fastq.gz #This should be changed into whatever you have last in sample names common between all samples 
 do

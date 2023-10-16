@@ -11,7 +11,7 @@ where refernce genome fna is a fasta file that is used as the reference genome f
 where reference gtf is a gene transfer format  file neccesary for generarting HTSEQ count file 
 
 ```ruby 
-!/bin/bash
+#!/bin/bash
 #Make sure to change all <pwd> with the current working directory where you have all fastq raw reads and your gft and reference genome 
 # Format for Fastq raw read file names : <sample>_1.fq.gz <sample>_2.fq.gz
 
